@@ -13,6 +13,7 @@ class RCopy
                 , "\Pictures\Camera Roll")
             , rename_as: ""
             , source: ""
+            , dry_run: false
             , help_context_vars: false
             , help: false }
 	}
@@ -73,6 +74,24 @@ class RCopy
         return _log.Exit()
     }
 
+    SetupTargetPath()
+    {
+        _log := new Logger("class." A_ThisFunc)
+
+        if (RCopy.options.dest)
+        {
+            dest_dir := RCopy.UseContext(RCopy.options.dest)
+            target_path := dest_dir . (SubStr(dest_dir, 0) = "\" ? "" : "\")
+        }
+        for i, subdir in RCopy.options.subdirs
+        {
+            subdir := RCopy.UseContext(subdir)
+            target_path .= subdir . (SubStr(subdir, 0) = "\" ? "" : "\")
+        }
+
+        return _log.Exit(target_path)
+    }
+
     CopyAndRename()
     {
         _log := new Logger("class." A_ThisFunc)
@@ -96,49 +115,40 @@ class RCopy
         return _log.Exit()
     }
 
-    UseContext(name)
+    UseContext(name) ; IDEA: Rename to UseCtx
     {
         _log := new Logger("class." A_ThisFunc)
-        _log.Logs(Logger.Input, "name", name)
 
         p := 1
         loop
         {
-            if (p := RegExMatch(name, "%(d|m|yy?|s_?)%", $, p))
+            if (p := RegExMatch(name, "%(d|m|yy?|s1?_?)%", $, p))
             {
-                if (_log.Logs(Logger.Finest))
-                {
-                    _log.Finest("p", p)
-                    _log.Finest("$", $)
-                }
                 name := name.ReplaceAt(p, StrLen($), RCopy.context_vars[$].value)
                 p += StrLen($)
             }
-        } until (p = 0)
+        }
+        until (p = 0)
 
         p := 1
         loop
         {
             if (p := RegExMatch(name, "%0*x%", $, p))
             {
-                if (_log.Logs(Logger.Finest))
-                {
-                    _log.Finest("p", p)
-                    _log.Finest("$", $)
-                }
                 name := name.ReplaceAt(p, StrLen($)
                     , (RCopy.context_vars["%x%"].value).Pad(String.PAD_NUMBER
                     , StrLen($)-2))
                 p += StrLen($)
             }
-        } until (p = 0)
+        }
+        until (p = 0)
 
         name := StrReplace(name, "%%", "%")
 
         return _log.Exit(name)
     }
 
-    IncreaseSequenceContext()
+    IncreaseSequenceContext() ; IDEA: Rename to IncSeqCtx
     {
         _log := new Logger("class." A_ThisFunc)
 
@@ -147,16 +157,9 @@ class RCopy
         return _log.Exit()
     }
 
-    FillFileContext(filename, create_timstamp, index)
+    FillFileContext(filename, create_timstamp, index) ; IDEA: Rename to FillFileCtx
     {
         _log := new Logger("class." A_ThisFunc)
-
-        if (_log.Logs(Logger.Input))
-        {
-            _log.Input("filename", filename)
-            _log.Input("create_timstamp", create_timstamp)
-            _log.Input("index", index)
-        }
 
         FormatTime year, %create_timstamp%, yyyy
         FormatTime year2, %create_timstamp%, yy
@@ -169,58 +172,25 @@ class RCopy
         RCopy.context_vars["%d%"].value := day
         RCopy.context_vars["%x%"].value := index
 
-        if (_log.Logs(Logger.Finest))
-        {
-            _log.Finest("day", day)
-            _log.Finest("month", month)
-            _log.Finest("year", year)
-            _log.Finest("year2", year2)
-            _log.Finest("RCopy.context_vars[""%d%""].value"
-                , RCopy.context_vars["%d%"].value)
-            _log.Finest("RCopy.context_vars[""%m%""].value"
-                , RCopy.context_vars["%m%"].value)
-            _log.Finest("RCopy.context_vars[""%y%""].value"
-                , RCopy.context_vars["%y%"].value)
-            _log.Finest("RCopy.context_vars[""%yy%""].value"
-                , RCopy.context_vars["%yy%"].value)
-            _log.Finest("RCopy.context_vars[""%x%""].value"
-                , RCopy.context_vars["%x%"].value)
-        }
-
         return _log.Exit()
     }
 
-    FillGlobalContext()
+    FillGlobalContext() ; IDEA: Rename to FillGlobalCtx
     {
         _log := new Logger("class." A_ThisFunc)
 
         n_subdirs := RCopy.options.subdirs.MaxIndex()
-        _log.Logs(Logger.Finest, "n_subdirs", n_subdirs)
         if (n_subdirs)
         {
             s := RCopy.options.subdirs[n_subdirs]
             _log.Logs(Logger.Finest, "s", s)
             RCopy.context_vars["%s%"].value := s
             RCopy.context_vars["%s_%"].value := RegExReplace(s, "\s", "_")
-            if (_log.Logs(Logger.Finest))
-            {
-                _log.Finest("RCopy.context_vars[""%s%""].value"
-                    , RCopy.context_vars["%s%"].value)
-                _log.Finest("RCopy.context_vars[""%s_%""].value"
-                    , RCopy.context_vars["%s_%"].value)
-            }
 
             s1 := RCopy.options.subdirs[1]
             _log.Logs(Logger.Finest, "s1", s1)
             RCopy.context_vars["%s1%"].value := s1
             RCopy.context_vars["%s1_%"].value := RegExReplace(s1, "\s", "_")
-            if (_log.Logs(Logger.Finest))
-            {
-                _log.Finest("RCopy.context_vars[""%s1%""].value"
-                    , RCopy.context_vars["%s1%"].value)
-                _log.Finest("RCopy.context_vars[""%s1_%""].value"
-                    , RCopy.context_vars["%s1_%"].value)
-            }
         }
 
         return _log.Exit()
@@ -254,11 +224,13 @@ class RCopy
             . "If the directory doesn't exist, it will be created"
             , OptParser.OPT_ARG | OptParser.OPT_MULTIPLE))
         op.Add(new OptParser.String("d", "dest", RCopy.options, "dest", "dir"
-            , "Destination directory"
+            , "Destination directory. Context variables my be used."
             , OptParser.OPT_ARG, RCopy.options.dest, RCopy.options.dest))
         op.Add(new OptParser.Line("", "(Default: " RCopy.options.dest ")"))
         op.Add(new OptParser.String("r", "rename-as", RCopy.options, "rename_as"
             , "pattern"))
+        op.Add(new OptParser.Boolean("", "dry-run", RCopy.options, "dry_run"
+            , "Run without performing any file operation"))
         op.Add(new OptParser.Boolean(0, "help-context-vars", RCopy.options
             , "help_context_vars"
             , "Show available context variables"))
@@ -347,4 +319,3 @@ class RCopy
 Main:
 _main := new Logger("app.RCopy.label.main")
 exitapp _main.Exit(RCopy.run(System.vArgs))	; NOTEST-END
-; vim:tw=100:ts=4:sts=4:sw=4:et:ft=autohotkey:nobomb

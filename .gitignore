@@ -1,14 +1,4 @@
-*~
-*.exe
-\#*\#
-trace.log
-.*.marks
-.*.swp
-.*.swo
-.*.swn
-.*.exe
 /test/Testdata/**
 *.ctest
 *.crun
 *.cstat
-tags

@@ -33,6 +33,11 @@ class RCopyTest extends TestCase
 		this.AssertTrue(IsFunc(RCopy.set_defaults))
 		this.AssertTrue(IsFunc(RCopy.set_context_vars))
 		this.AssertTrue(IsFunc(RCopy.SetupSourcePath))
+		this.AssertTrue(IsFunc(RCopy.SetupTargetPath))
+		this.AssertTrue(IsFunc(RCopy.CopyAndRename))
+		this.AssertTrue(IsFunc(RCopy.FillFileContext))
+		this.AssertTrue(IsFunc(RCopy.FillGlobalContext))
+		this.AssertTrue(IsFunc(RCopy.IncreaseSequenceContext))
 	}
 
     @Test_SetDefaults()
@@ -40,6 +45,7 @@ class RCopyTest extends TestCase
         this.AssertEquals(RCopy.options.subdirs, [])
         this.AssertEquals(RCopy.options.rename_as, "")
         this.AssertEquals(RCopy.options.source, "")
+        this.AssertEquals(RCopy.options.dry_run, false)
         this.AssertEquals(RCopy.options.help_context_vars, false)
         this.AssertEquals(RCopy.options.help, false)
     }
@@ -81,6 +87,45 @@ class RCopyTest extends TestCase
         this.AssertEquals(RCopy.options.source, "c:\work\t*.jpg")
     }
 
+    @Test_FillGlobalContext()
+    {
+        RCopy.FillGlobalContext()
+        this.AssertEquals(RCopy.context_vars["%s%"].value, "Image")
+        this.AssertEquals(RCopy.context_vars["%s_%"].value, "Image")
+        this.AssertEquals(RCopy.context_vars["%s1%"].value, "Image")
+        this.AssertEquals(RCopy.context_vars["%s1_%"].value, "Image")
+    }
+
+    @Test_FillGlobalContext_1_SubDir()
+    {
+        RCopy.options.subdirs := ["My Subdir"]
+        RCopy.FillGlobalContext()
+        this.AssertEquals(RCopy.context_vars["%s%"].value, "My Subdir")
+        this.AssertEquals(RCopy.context_vars["%s_%"].value, "My_Subdir")
+        this.AssertEquals(RCopy.context_vars["%s1%"].value, "My Subdir")
+        this.AssertEquals(RCopy.context_vars["%s1_%"].value, "My_Subdir")
+    }
+
+    @Test_FillGlobalContext_2_SubDirs()
+    {
+        RCopy.options.subdirs := ["My Customer", "2018", "Winter Campaign"]
+        RCopy.FillGlobalContext()
+        this.AssertEquals(RCopy.context_vars["%s%"].value, "Winter Campaign")
+        this.AssertEquals(RCopy.context_vars["%s_%"].value, "Winter_Campaign")
+        this.AssertEquals(RCopy.context_vars["%s1%"].value, "My Customer")
+        this.AssertEquals(RCopy.context_vars["%s1_%"].value, "My_Customer")
+    }
+
+    @Test_FillFileContext()
+    {
+        RCopy.FillFileContext("test.jpg", 20190114090807, 2)
+        this.AssertEquals(RCopy.context_vars["%d%"].value, "14")
+        this.AssertEquals(RCopy.context_vars["%m%"].value, "01")
+        this.AssertEquals(RCopy.context_vars["%y%"].value, "2019")
+        this.AssertEquals(RCopy.context_vars["%yy%"].value, "19")
+        this.AssertEquals(RCopy.context_vars["%x%"].value, "2")
+    }
+
     @Test_IncreaseSequenceContext()
     {
         this.AssertEquals(RCopy.context_vars["%x%"].value, 1)
@@ -94,6 +139,46 @@ class RCopyTest extends TestCase
     {
         this.AssertEquals(RCopy.UseContext("My_%s_%-%y%-%m%-%d%_%00x%")
             , "My_Image-YYYY-MM-DD_001")
+
+        RCopy.options.subdirs := ["My Project", "My Campaign"]
+        RCopy.FillGlobalContext()
+        RCopy.FillFileContext("test.jpg", 20190114094815, 13)
+        this.AssertEquals(RCopy.UseContext("%y%"), "2019")
+        this.AssertEquals(RCopy.UseContext("%yy%"), "19")
+        this.AssertEquals(RCopy.UseContext("%m%"), "01")
+        this.AssertEquals(RCopy.UseContext("%m%"), "01")
+        this.AssertEquals(RCopy.UseContext("%d%"), "14")
+        this.AssertEquals(RCopy.UseContext("%x%"), "13", TestCase.AS_STRING)
+        this.AssertEquals(RCopy.UseContext("%0x%"), "13", TestCase.AS_STRING)
+        this.AssertEquals(RCopy.UseContext("%00x%"), "013", TestCase.AS_STRING)
+        this.AssertEquals(RCopy.UseContext("%000x%"), "0013", TestCase.AS_STRING)
+        this.AssertEquals(RCopy.UseContext("%s%"), "My Campaign")
+        this.AssertEquals(RCopy.UseContext("%s_%"), "My_Campaign")
+        this.AssertEquals(RCopy.UseContext("%s1%"), "My Project")
+        this.AssertEquals(RCopy.UseContext("%s1_%"), "My_Project")
+    }
+
+    @Test_SetupTargetPath()
+    {
+        RCopy.options.dest := "c:\temp"
+        this.AssertEquals(RCopy.SetupTargetPath(), "c:\temp\")
+
+        RCopy.options.subdirs := ["My Project"]
+        this.AssertEquals(RCopy.SetupTargetPath(), "c:\temp\My Project\")
+
+        RCopy.options.subdirs := ["My Project\"]
+        this.AssertEquals(RCopy.SetupTargetPath(), "c:\temp\My Project\")
+
+        RCopy.options.subdirs := ["%y%", "%m%", "My Project"]
+        RCopy.FillFileContext("test.jpg", 20190114113819, 1)
+        this.AssertEquals(RCopy.SetupTargetPath(), "c:\temp\2019\01\My Project\")
+    }
+
+    @Test_SetupTargetPath2()
+    {
+        RCopy.options.dest := "c:\temp\%y%\%m%\%d%"
+        RCopy.FillFileContext("test.jpg", 20190114113819, 1)
+        this.AssertEquals(RCopy.SetupTargetPath(), "c:\temp\2019\01\14\")
     }
 /*
 	@Test_Operations() {
