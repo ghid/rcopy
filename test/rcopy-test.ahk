@@ -28,10 +28,12 @@ class RCopyTest extends TestCase
                 x := SubStr("0000" A_Index, -3)
                 fn := fd.GetPattern("%[P,_]") m d x
                 ts := date time
-                FileAppend,, %fn%.orf
+                data := fd.GetString(20)
+                FileAppend, %data%, %fn%.orf
                 FileSetTime %ts%, %fn%.orf, C
                 FileSetTime %ts%, %fn%.orf, M
-                FileAppend,, %fn%.jpg
+                data := fd.GetString(20)
+                FileAppend, %data%, %fn%.jpg
                 FileSetTime %ts%, %fn%.jpg, C
                 FileSetTime %ts%, %fn%.jpg, M
 			}
@@ -84,12 +86,13 @@ class RCopyTest extends TestCase
 
     @Test_SetContextVars()
     {
-        this.AssertTrue(RCopy.context_vars.HasKey("%y%"))
-        this.AssertTrue(RCopy.context_vars.HasKey("%yy%"))
-        this.AssertTrue(RCopy.context_vars.HasKey("%m%"))
-        this.AssertTrue(RCopy.context_vars.HasKey("%d%"))
-        this.AssertTrue(RCopy.context_vars.HasKey("%#%"))
-        this.AssertTrue(RCopy.context_vars.HasKey("%%"))
+        this.AssertTrue(RCopy.context_vars.HasKey(RCopy.CV_YEAR4))
+        this.AssertTrue(RCopy.context_vars.HasKey(RCopy.CV_YEAR2))
+        this.AssertTrue(RCopy.context_vars.HasKey(RCopy.CV_MONTH))
+        this.AssertTrue(RCopy.context_vars.HasKey(RCopy.CV_DAY))
+        this.AssertTrue(RCopy.context_vars.HasKey(RCopy.CV_X))
+        this.AssertTrue(RCopy.context_vars.HasKey(RCopy.CV_Y))
+        this.AssertTrue(RCopy.context_vars.HasKey(RCopy.CV_PCT))
     }
 
     @Test_SetupSourcePath()
@@ -117,38 +120,39 @@ class RCopyTest extends TestCase
 
     @Test_FillFileContext()
     {
-        RCopy.FillFileContext("test.jpg", 20190114090807, 2)
-        this.AssertEquals(RCopy.context_vars["%d%"].value, "14")
-        this.AssertEquals(RCopy.context_vars["%m%"].value, "01")
-        this.AssertEquals(RCopy.context_vars["%y%"].value, "2019")
-        this.AssertEquals(RCopy.context_vars["%yy%"].value, "19")
-        this.AssertEquals(RCopy.context_vars["%#%"].value, "2")
+        RCopy.FillFileContext("test.jpg", 20190114090807)
+        this.AssertEquals(RCopy.context_vars[RCopy.CV_DAY].value, "14")
+        this.AssertEquals(RCopy.context_vars[RCopy.CV_MONTH].value, "01")
+        this.AssertEquals(RCopy.context_vars[RCopy.CV_YEAR4].value, "2019")
+        this.AssertEquals(RCopy.context_vars[RCopy.CV_YEAR2].value, "19")
     }
 
     @Test_IncreaseSequenceContext()
     {
-        this.AssertEquals(RCopy.context_vars["%#%"].value, 1)
+        this.AssertEquals(RCopy.context_vars[RCopy.CV_X].value, 1)
         RCopy.IncreaseSequenceContext()
-        this.AssertEquals(RCopy.context_vars["%#%"].value, 2)
+        this.AssertEquals(RCopy.context_vars[RCopy.CV_X].value, 2)
         RCopy.IncreaseSequenceContext()
-        this.AssertEquals(RCopy.context_vars["%#%"].value, 3)
+        this.AssertEquals(RCopy.context_vars[RCopy.CV_X].value, 3)
     }
 
     @Test_UseContext()
     {
-        this.AssertEquals(RCopy.UseContext("My_Image-%y%-%m%-%d%_%00x%")
+        this.AssertEquals(RCopy.UseContext("My_Image-%y4%-%m%-%d%_%00x%")
             , "My_Image-YYYY-MM-DD_001")
 
-        RCopy.FillFileContext("test.jpg", 20190114094815, 13)
-        this.AssertEquals(RCopy.UseContext("%y%"), "2019")
-        this.AssertEquals(RCopy.UseContext("%yy%"), "19")
+        RCopy.FillFileContext("test.jpg", 20190114094815)
+        RCopy.context_vars[RCopy.CV_X].value := 13
+        this.AssertEquals(RCopy.UseContext("%y4%"), "2019")
+        this.AssertEquals(RCopy.UseContext("%y2%"), "19")
         this.AssertEquals(RCopy.UseContext("%m%"), "01")
         this.AssertEquals(RCopy.UseContext("%m%"), "01")
         this.AssertEquals(RCopy.UseContext("%d%"), "14")
         this.AssertEquals(RCopy.UseContext("%x%"), "13", TestCase.AS_STRING)
         this.AssertEquals(RCopy.UseContext("%0x%"), "13", TestCase.AS_STRING)
         this.AssertEquals(RCopy.UseContext("%00x%"), "013", TestCase.AS_STRING)
-        this.AssertEquals(RCopy.UseContext("%000x%"), "0013", TestCase.AS_STRING)
+        this.AssertEquals(RCopy.UseContext("%000x%")
+            , "0013", TestCase.AS_STRING)
     }
 
     @Test_SetupTargetPath()
@@ -159,7 +163,7 @@ class RCopyTest extends TestCase
 
     @Test_SetupTargetPath2()
     {
-        RCopy.options.dest := "c:\temp\%y%\%m%\%d%"
+        RCopy.options.dest := "c:\temp\%y4%\%m%\%d%"
         RCopy.FillFileContext("test.jpg", 20190114113819, 1)
         this.AssertEquals(RCopy.SetupTargetPath(), "c:\temp\2019\01\14\")
     }
@@ -168,6 +172,28 @@ class RCopyTest extends TestCase
     {
         this.AssertEquals(RCopy.FtExpr()
             , "i)^(.*\.jpe?g|.*\.tiff?|.*\.orf|.*\.dng)$")
+    }
+
+    @Test_CollectFilenames()
+    {
+        RCopy.SetupSourcePath(A_ScriptDir "\Testdata\DCIM\100OLYMP")
+        RCopy.CollectFilenames(good, bad)
+        this.AssertEquals(good.MaxIndex(), 40)
+        this.AssertEquals(bad.MaxIndex(), 1)
+    }
+
+    @Test_CollectFilenames1()
+    {
+        RCopy.SetupSourcePath(A_ScriptDir "\Testdata\DCIM\100OLYMP\x*")
+        RCopy.CollectFilenames(good)
+        this.AssertEquals(good.MaxIndex(), "")
+    }
+
+    @Test_FileMD5()
+    {
+        this.AssertEquals(RCopy.FileMD5(A_ScriptDir
+            . "\Testdata\DCIM\100OLYMP\_4110007.jpg")
+            , "c43ebad6b674a87a78b2fabfb677e8ca")
     }
 }
 

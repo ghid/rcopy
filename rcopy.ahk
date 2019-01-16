@@ -1,48 +1,55 @@
 ; ahk: console
 class RCopy
 {
+    static CV_YEAR4 := "%y4%"
+    static CV_YEAR2 := "%y2%"
+    static CV_MONTH := "%m%"
+    static CV_DAY := "%d%"
+    static CV_X := "%x%"
+    static CV_Y := "%y%"
+    static CV_PCT := "%%"
 
 	static options := RCopy.set_defaults()
     static context_vars := RCopy.set_context_vars()
 
 	set_defaults() ; IDEA: Rename to InitDefaults()
     {
-		return { subdirs: []
-            , dest: RegExReplace(A_MyDocuments
+		return { dest: RegExReplace(A_MyDocuments
                 , "\\Documents$"
                 , "\Pictures\Camera Roll")
             , rename_as: ""
             , source: ""
+            , start_with: 1
             , dry_run: false
+            , file_types: [".*\.jpe?g"
+                , ".*\.tiff?"
+                , ".*\.orf"
+                , ".*\.dng"]
+            , verify: false
             , help_context_vars: false
+            , help_file_types: false
             , help: false }
 	}
 
     set_context_vars() ; IDEA: Rename to InitCtxVars()
     {
-        return { "%y%": { value: "YYYY"
+        return { RCopy.CV_YEAR4: { value: "YYYY"
                 , desc: "4-digit year of creation date of the source file" }
-            , "%yy%":  { value: "YY"
+            , RCopy.CV_YEAR2:  { value: "YY"
                 , desc: "2-digit year of creation date of the source file" }
-            , "%m%":   { value: "MM"
+            , RCopy.CV_MONTH: { value: "MM"
                 , desc: "2-digit month of creation date of the source file" }
-            , "%d%":   { value: "DD"
+            , RCopy.CV_DAY: { value: "DD"
                 , desc: "2-digit day of creation date of the source file" }
-            , "%s%":   { value: "Image"
-                , desc: "Value of the deepest given subdir if available; "
-                . "otherwise ""Image""" }
-            , "%s_%":  { value: "Image"
-                , desc: "Same as ""%s%"" but spaces will be replaces by ""_""" }
-            , "%s1%":  { value: "Image"
-                , desc: "Value of the first given subdir if available; "
-                . "otherwise ""Image""" }
-            , "%s1_%": { value: "Image"
-                , desc: "Same as ""%s1"" but spaces will be replaced by ""_""" }
-            , "%x%":   { value: 1
+            , RCopy.CV_X: { value: 1
                 , desc: "Sequence number which will be increased by every file "
                 . "processed (use e.g. %00x% to create 3 digits with leadings "
-                . "zeroes)" }
-            , "%%":    { value: "%"
+                . "zeroes). Start value is 1 but can be changed by "
+                . "'--start-with' option" }
+            , RCopy.CV_Y: { value: 0
+                , desc: "Number of files to import (use e.g. %00y% to create "
+                . "3 digits with leading zeroes)."}
+            , RCopy.CV_PCT: { value: "%"
                 , desc: "Insert a single `%` character" } }
     }
 
@@ -50,7 +57,7 @@ class RCopy
     {
         _log := new Logger("class." A_ThisFunc)
 
-        TestCase.Assert(source_path <> "", "Specify source-dir\pattern", "error")
+        TestCase.Assert(source_path <> "", "Specify source", "error")
 
         if (RegExMatch(source_path, "(\.|\*|\*\.|\*\.\*|\.\\\*)$"))
         {
@@ -83,11 +90,6 @@ class RCopy
             dest_dir := RCopy.UseContext(RCopy.options.dest)
             target_path := dest_dir . (SubStr(dest_dir, 0) = "\" ? "" : "\")
         }
-        for i, subdir in RCopy.options.subdirs
-        {
-            subdir := RCopy.UseContext(subdir)
-            target_path .= subdir . (SubStr(subdir, 0) = "\" ? "" : "\")
-        }
 
         return _log.Exit(target_path)
     }
@@ -96,23 +98,81 @@ class RCopy
     {
         _log := new Logger("class." A_ThisFunc)
 
-        RCopy.FillGlobalContext()
-
         Ansi.WriteLine("Copy from: " RCopy.options.source)
         Ansi.WriteLine("       to: " RCopy.options.dest)
-        Ansi.WriteLine(, true)
 
-        loop files, % RCopy.options.source
+        fn_list := [], fn_discarded := []
+        RCopy.CollectFilenames(fn_list, fn_discarded)
+        Ansi.Write("`nFound %s %s, "
+            .printf((fn_list.MaxIndex() = "" ? ["no", "files"]
+                : fn_list.MaxIndex() = 1 ? ["1", "file"]
+                : [fn_list.MaxIndex(), "files"])))
+        Ansi.Write("discarded %s %s."
+            .printf((fn_discarded.MaxIndex() = "" ? ["no", "files"]
+                : fn_discarded.MaxIndex() = 1 ? ["1", "file"]
+                : [fn_discarded.MaxIndex(), "files"])))
+
+        Ansi.WriteLine("", true)
+        for i, file in fn_list
         {
-            RCopy.FillFileContext(A_LoopFilePath, A_LoopFileTimeCreated, A_Index)
-            pattern := RCopy.UseContext(RCopy.options.rename_as)
-                . "." A_LoopFileExt
-            _log.Logs(Logger.Finest, "pattern", pattern)
-            Ansi.WriteLine(A_LoopFileName " ... " pattern, true)
+            RCopy.FillFileContext(file.name, file.create_time)
+            target_dir := RCopy.SetupTargetPath()
+
+            if (RCopy.options.rename_as)
+            {
+                pattern := RCopy.UseContext(RCopy.options.rename_as)
+                    . "." file.ext
+            }
+            else
+            {
+                pattern := file.name
+            }
+            Ansi.WriteLine(file.name " ... " target_dir pattern, true)
             RCopy.IncreaseSequenceContext()
         }
 
         return _log.Exit()
+    }
+
+    CollectFilenames(ByRef passed_files, ByRef discarded_files)
+    {
+        _log := new Logger("class." A_ThisFunc)
+
+        md5sum := ""
+        passed_files := [], discarded_files := []
+        loop files, % RCopy.options.source
+        {
+            if (RegExMatch(A_LoopFileName, RCopy.FtExpr()))
+            {
+                if (RCopy.options.verify)
+                {
+                    md5sum := RCopy.FileMD5(A_LoopFileFullPath)
+                }
+                passed_files.Push({ name: A_LoopFileName
+                    , create_time: A_LoopFileTimeCreated
+                    , ext: A_LoopFileExt
+                    , csum: md5sum })
+            }
+            else
+            {
+                discarded_files.Push(A_LoopFileName)
+            }
+        }
+        RCopy.context_vars[RCopy.CV_Y].value := passed_files.MaxIndex()
+
+        return _log.Exit()
+    }
+
+    FileMD5(file_name)
+    {
+        _log := new Logger("class." A_ThisFunc)
+
+        file := FileOpen(file_name, "r")
+        FileGetSize size, %file_name%
+        size := file.RawRead(content, size)
+        file.Close()
+
+        return _log.Exit(Crypto.MD5.Encode(content, size))
     }
 
     UseContext(name) ; IDEA: Rename to UseCtx
@@ -122,9 +182,10 @@ class RCopy
         p := 1
         loop
         {
-            if (p := RegExMatch(name, "%(d|m|yy?|s1?_?)%", $, p))
+            if (p := RegExMatch(name, "%(d|m|y[24])%", $, p))
             {
-                name := name.ReplaceAt(p, StrLen($), RCopy.context_vars[$].value)
+                name := name.ReplaceAt(p, StrLen($)
+                    , RCopy.context_vars[$].value)
                 p += StrLen($)
             }
         }
@@ -133,17 +194,20 @@ class RCopy
         p := 1
         loop
         {
-            if (p := RegExMatch(name, "%0*x%", $, p))
+            if (p := RegExMatch(name, "%0*([xy])%", $, p))
             {
                 name := name.ReplaceAt(p, StrLen($)
-                    , (RCopy.context_vars["%x%"].value).Pad(String.PAD_NUMBER
+                    , (RCopy.context_vars["%"
+                    . $1
+                    . "%"].value).Pad(String.PAD_NUMBER
                     , StrLen($)-2))
-                p += StrLen($)
+                p += StrLen($)-2
             }
         }
         until (p = 0)
 
-        name := StrReplace(name, "%%", "%")
+        name := StrReplace(name, RCopy.CV_PCT
+            , RCopy.context_vars[RCopy.CV_PCT].value)
 
         return _log.Exit(name)
     }
@@ -152,12 +216,12 @@ class RCopy
     {
         _log := new Logger("class." A_ThisFunc)
 
-        RCopy.context_vars["%x%"].value += 1
+        RCopy.context_vars[RCopy.CV_X].value += 1
 
         return _log.Exit()
     }
 
-    FillFileContext(filename, create_timstamp, index) ; IDEA: Rename to FillFileCtx
+    FillFileContext(filename, create_timstamp) ; IDEA: Rename to FillFileCtx
     {
         _log := new Logger("class." A_ThisFunc)
 
@@ -166,32 +230,10 @@ class RCopy
         FormatTime month, %create_timstamp%, MM
         FormatTime day, %create_timstamp%, dd
 
-        RCopy.context_vars["%y%"].value := year
-        RCopy.context_vars["%yy%"].value := year2
-        RCopy.context_vars["%m%"].value := month
-        RCopy.context_vars["%d%"].value := day
-        RCopy.context_vars["%x%"].value := index
-
-        return _log.Exit()
-    }
-
-    FillGlobalContext() ; IDEA: Rename to FillGlobalCtx
-    {
-        _log := new Logger("class." A_ThisFunc)
-
-        n_subdirs := RCopy.options.subdirs.MaxIndex()
-        if (n_subdirs)
-        {
-            s := RCopy.options.subdirs[n_subdirs]
-            _log.Logs(Logger.Finest, "s", s)
-            RCopy.context_vars["%s%"].value := s
-            RCopy.context_vars["%s_%"].value := RegExReplace(s, "\s", "_")
-
-            s1 := RCopy.options.subdirs[1]
-            _log.Logs(Logger.Finest, "s1", s1)
-            RCopy.context_vars["%s1%"].value := s1
-            RCopy.context_vars["%s1_%"].value := RegExReplace(s1, "\s", "_")
-        }
+        RCopy.context_vars[RCopy.CV_YEAR4].value := year
+        RCopy.context_vars[RCopy.CV_YEAR2].value := year2
+        RCopy.context_vars[RCopy.CV_MONTH].value := month
+        RCopy.context_vars[RCopy.CV_DAY].value := day
 
         return _log.Exit()
     }
@@ -212,37 +254,84 @@ class RCopy
         return _log.Exit()
     }
 
-	cli()
+    ListFileTypes()
+    {
+        _log := new Logger("class." A_ThisFunc)
+
+        Ansi.WriteLine()
+        for i, file_type_expr in RCopy.options.file_types
+        {
+            Ansi.WriteLine(file_type_expr)
+        }
+        Ansi.WriteLine(,true)
+
+        return _log.Exit()
+    }
+
+    FtExpr()
+    {
+        _log := new Logger("class." A_ThisFunc)
+
+        ft_expr := ""
+        for i, file_type in RCopy.options.file_types
+        {
+            ft_expr .= (ft_expr = "" ? "" : "|") file_type
+        }
+
+        return _log.Exit("i)^(" ft_expr ")$")
+    }
+
+	CLI()
     {
 		_log := new Logger("class." A_ThisFunc)
 
-        op := new OptParser("RCopy: [options] <source-dir\pattern>",, "RCOPY_OPTS")
+        op := new OptParser("RCopy: [options] <source>",, "RCOPY_OPTS")
+        op.Add(new OptParser.Line("source"
+            , "Path and/or file pattern. Only supported file types will be "
+            . "copied, regardless of a given file pattern`n"))
         op.Add(new OptParser.Group("Available options"))
-        op.Add(new OptParser.String("s", "subdir", RCopy.options, "subdirs"
-            , "dir"
-            , "Copy into a sub-directory. Context variables may be used. "
-            . "If the directory doesn't exist, it will be created"
-            , OptParser.OPT_ARG | OptParser.OPT_MULTIPLE))
-        op.Add(new OptParser.String("d", "dest", RCopy.options, "dest", "dir"
-            , "Destination directory. Context variables my be used."
+        op.Add(new OptParser.String("d", "dest", RCopy.options
+            , "dest", "dir"
+            , "Destination directory. Context variables my be used"
             , OptParser.OPT_ARG, RCopy.options.dest, RCopy.options.dest))
         op.Add(new OptParser.Line("", "(Default: " RCopy.options.dest ")"))
-        op.Add(new OptParser.String("r", "rename-as", RCopy.options, "rename_as"
-            , "pattern"))
-        op.Add(new OptParser.Boolean("", "dry-run", RCopy.options, "dry_run"
+        op.Add(new OptParser.String("r", "rename-as", RCopy.options
+            , "rename_as", "pattern"
+            , "Define a pattern to create the file name for the copied file. "
+            . "Context variables may be used (Default: name of the original "
+            . "file)"))
+        op.Add(new OptParser.String(0, "start-with", RCopy.options
+            , "start_with", "number"
+            , "Number to begin numbering with"
+            , OptParser.OPT_ARG
+            , RCopy.options.start_with, RCopy.options.start_with))
+        op.Add(new OptParser.String(0, "add-ft-expr", RCopy.options
+            , "file_types", "expr"
+            , "Add expression to select more file types"
+            , OptParser.OPT_ARG | OptParser.OPT_MULTIPLE
+            , RCopy.options.file_types, RCopy.options.file_types))
+        op.Add(new OptParser.Boolean("v", "verify", RCopy.options
+            , "verify"
+            , "Verify if the files have been properly copied"))
+        op.Add(new OptParser.Boolean(0, "dry-run", RCopy.options
+            , "dry_run"
             , "Run without performing any file operation"))
         op.Add(new OptParser.Boolean(0, "help-context-vars", RCopy.options
             , "help_context_vars"
             , "Show available context variables"))
+        op.Add(new OptParser.Boolean(0, "help-file-types", RCopy.options
+            , "help_file_types"
+            , "Show supported file types"))
         op.Add(new OptParser.Line("--[no]env", "Ignore environment variable "
             . op.stEnvVarName))
-		op.Add(new OptParser.Boolean("h", "help", RCopy.options, "help"
+		op.Add(new OptParser.Boolean("h", "help", RCopy.options
+            , "help"
             , "Display usage", OptParser.OPT_HIDDEN))
 
 		return _log.Exit(op)
 	}
 
-	run(args)
+	Run(args)
     {
 		_log := new Logger("class." A_ThisFunc)
 
@@ -255,15 +344,8 @@ class RCopy
 		try
         {
 			rc := 1
-			op := RCopy.cli()
+			op := RCopy.CLI()
 			args := op.Parse(args)
-			if (_log.Logs(Logger.Finest))
-            {
-				_log.Finest("rc", rc)
-				_log.Finest("RCopy.options:`n" LoggingHelper.Dump(RCopy.options))
-                _log.Finest("args:`n" LoggingHelper.Dump(args))
-			}
-
 			if (RCopy.options.help)
             {
 				Ansi.WriteLine(op.Usage())
@@ -273,25 +355,19 @@ class RCopy
             {
                 RCopy.ListContextVars()
                 rc := ""
-			}
+            } else if (RCopy.options.help_file_types)
+            {
+                RCopy.ListFileTypes()
+                rc := ""
+            }
             else
             {
-                n_args := args.MaxIndex()
-                _log.Logs(Logger.Finest, "n_args", n_args)
-
-                if (n_args > 1)
+                if (args.MaxIndex() > 1)
                 {
                     throw _log.Exit(Exception("Too many arguments"))
                 }
                 RCopy.SetupSourcePath(args[1])
-
-                if (_log.Logs(Logger.Finest))
-                {
-                    _log.Finest("rc", rc)
-                    _log.Finest("RCopy.options:`n"
-                        . LoggingHelper.Dump(RCopy.options))
-                }
-
+                RCopy.context_vars[RCopy.CV_X].value := RCopy.options.start_with
                 RCopy.CopyAndRename()
             }
 		}
@@ -315,7 +391,8 @@ class RCopy
 #include <string>
 #include <optparser>
 #include <testcase>
+#include <crypto>
 
 Main:
 _main := new Logger("app.RCopy.label.main")
-exitapp _main.Exit(RCopy.run(System.vArgs))	; NOTEST-END
+exitapp _main.Exit(RCopy.Run(System.vArgs))	; NOTEST-END
